@@ -20,7 +20,7 @@
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         }
-        .label-upload {
+        .scan-trigger {
             display: block;
             background-color: #ff9f0a;
             color: white;
@@ -28,10 +28,13 @@
             font-size: 18px;
             border-radius: 12px;
             cursor: pointer;
-            font-weight: 600;
+            font-weight: bold;
             margin-bottom: 20px;
             box-shadow: 0 4px 12px rgba(255, 159, 10, 0.3);
+            border: none;
+            width: 100%;
         }
+        .scan-trigger:active { background-color: #e08b00; }
         .setup-section {
             background: #f2f2f7;
             padding: 15px;
@@ -45,7 +48,7 @@
             margin-top: 10px;
             font-size: 14px;
         }
-        input[type="number"] {
+        input[type="number"], input[type="text"] {
             width: 100%;
             padding: 12px;
             margin-top: 5px;
@@ -54,6 +57,12 @@
             font-size: 16px;
             box-sizing: border-box;
             -webkit-appearance: none;
+        }
+        /* Gömmer det magiska textfältet men håller det aktivt */
+        #magic-scanner {
+            position: absolute;
+            left: -9999px;
+            opacity: 0;
         }
         .quick-buttons {
             display: flex;
@@ -71,14 +80,6 @@
             font-weight: 500;
         }
         .quick-btn:active { background: #d1d1d6; }
-        #preview {
-            max-width: 100%;
-            max-height: 180px;
-            margin-bottom: 15px;
-            border-radius: 8px;
-            display: none;
-            object-fit: contain;
-        }
         .result-box {
             padding: 20px;
             background-color: #1c1c1e;
@@ -87,7 +88,7 @@
             margin-top: 15px;
         }
         .apk-value {
-            font-size: 46px;
+            font-size: 52px;
             font-weight: 900;
             color: #30d158;
             margin: 5px 0;
@@ -97,16 +98,14 @@
             color: #aeaeae;
             font-weight: 500;
         }
-        input[type="file"] { display: none; }
     </style>
-    <!-- Vi använder senaste stabila Tesseract.js -->
-    <script src="https://jsdelivr.net"></script>
 </head>
 <body>
 
 <div class="container">
-    <h2>APK-Scanner 🍻</h2>
+    <h2>Blazingly Fast APK-Scanner 🍻</h2>
     
+    <!-- Steg 1: Egenskaper -->
     <div class="setup-section">
         <label>1. Volym (ml):</label>
         <input type="number" id="volume" value="500">
@@ -127,27 +126,26 @@
         </div>
     </div>
 
-    <label class="label-upload">
-        📷 Skanna Prislapp
-        <input type="file" id="image-input" accept="image/*" capture="environment">
-    </label>
+    <!-- Det dolda magiska fältet som aktiverar iPhones Live-text-scanner -->
+    <input type="text" id="magic-scanner" placeholder="Skanna här" autocomplete="off">
 
-    <img id="preview" alt="Prislapp">
+    <!-- Den stora knappen användaren trycker på -->
+    <button class="scan-trigger" onclick="startaSkanning()">📷 SKANNA PRISLAPPEN</button>
 
+    <!-- Resultat -->
     <div class="result-box">
-        <div class="status-text" id="status">Väntar på prislapp...</div>
+        <div class="status-text" id="status">Redo! Ställ in volym & halt och scanna.</div>
         <div class="apk-value" id="apk-result">0.00</div>
         <div style="font-size: 14px; color: #aeaeae;">Alkohol Per Krona (APK)</div>
         <hr style="border: 0; border-top: 1px solid #3a3a3c; margin: 15px 0;">
         <p style="font-size: 14px; color: #aeaeae; margin: 0;">
-            Hittat pris: <span id="detected-price" style="color:white; font-weight:bold;">-</span> kr
+            Avläst pris: <span id="detected-price" style="color:white; font-weight:bold;">-</span> kr
         </p>
     </div>
 </div>
 
 <script>
-    const imageInput = document.getElementById('image-input');
-    const preview = document.getElementById('preview');
+    const magicScanner = document.getElementById('magic-scanner');
     const statusText = document.getElementById('status');
     const apkResult = document.getElementById('apk-result');
     const detectedPriceText = document.getElementById('detected-price');
@@ -157,86 +155,38 @@
 
     let globaltPris = null;
 
-    imageInput.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        statusText.innerText = "Anpassar iPhone 15-bild...";
-        apkResult.innerText = "0.00";
-        detectedPriceText.innerText = "-";
-
-        // Skapa en bildläsare för att kunna skala ner bilden
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            const img = new Image();
-            img.onload = function() {
-                // HÄR SKALAS BILDEN NER SÅ ATT IPHONE 15 INTE KRASCHAR MINNET
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 800; // Optimal storlek för AI-läsning
-                let width = img.width;
-                let height = img.height;
-
-                if (width > MAX_WIDTH) {
-                    height *= MAX_WIDTH / width;
-                    width = MAX_WIDTH;
-                }
-                
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-
-                // Visa den nerskalade bilden i appen
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-                preview.src = dataUrl;
-                preview.style.display = 'block';
-
-                // Skicka den lätta bilden till Tesseract
-                startaScanning(dataUrl);
-            };
-            img.src = event.target.result;
-        };
-        reader.readAsDataURL(file);
-    });
-
-    async function startaScanning(bildKälla) {
-        statusText.innerText = "Ansluter till AI-motorn...";
-        try {
-            // Konfiguration optimerad för iOS Safari
-            const worker = await Tesseract.createWorker('swe', 1, {
-                workerPath: 'https://jsdelivr.net',
-                corePath: 'https://jsdelivr.net',
-            });
-            
-            statusText.innerText = "Läser av text...";
-            const { data: { text } } = await worker.recognize(bildKälla);
-            await worker.terminate();
-
-            statusText.innerText = "Analyserar siffror...";
-            tolkaTextOchHittaPris(text);
-        } catch (err) {
-            statusText.innerText = "Krasch! Testa att ladda om sidan.";
-            console.error(err);
-        }
+    function startaSkanning() {
+        // Tömmer fältet och sätter fokus på det dolda fältet
+        magicScanner.value = '';
+        magicScanner.focus();
+        statusText.innerText = "Öppnar iPhones Live Text-kamera...";
     }
 
+    // Lyssnar på när iPhonens inbyggda scanner klistrar in text i fältet
+    magicScanner.addEventListener('input', function() {
+        const texten = magicScanner.value;
+        if (texten.length > 0) {
+            statusText.innerText = "Tolkar priset...";
+            tolkaTextOchHittaPris(texten);
+        }
+    });
+
     function tolkaTextOchHittaPris(text) {
-        console.log("Skannad råtext:", text);
+        console.log("Inmatad text från iPhone:", text);
         
-        // Letar efter mönster som "XX,XX" eller "XX:XX" eller bara "XX"
+        // Letar efter priser (t.ex. 19,90 eller 24:90 eller 25)
         const regex = /\b\d+(?:[\.,:]\d{2})?\b/g;
         const matches = text.match(regex);
 
         if (matches && matches.length > 0) {
-            // Filtrera ut orimliga priser (t.ex. artikelnummer som är jättelånga)
+            // Filtrera ut rimliga priser (mellan 5kr och 1000kr) för att missa streckkoder
             const giltigaPriser = matches
                 .map(m => m.replace(':', '.').replace(',', '.'))
                 .map(m => parseFloat(m))
-                .filter(p => !isNaN(p) && p > 2 && p < 1000); // Pris mellan 2kr och 1000kr
+                .filter(p => !isNaN(p) && p >= 5 && p < 1000);
 
             if (giltigaPriser.length > 0) {
-                // Vi utgår från att det första giltiga talet i texten är priset
-                let pris = giltigaPriser[0];
+                let pris = giltigaPriser[0]; // Tar det första rimliga priset den ser
                 globaltPris = pris;
                 detectedPriceText.innerText = pris.toFixed(2);
                 statusText.innerText = "Pris hittat!";
@@ -244,7 +194,7 @@
                 return;
             }
         }
-        statusText.innerText = "Kunde ej tolka pris. Kom närmare prislappen.";
+        statusText.innerText = "Hittade inget giltigt pris. Skriv in priset manuellt om du vill.";
     }
 
     function beräknaAPK(pris) {
